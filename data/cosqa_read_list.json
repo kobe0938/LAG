@@ -1,0 +1,47 @@
+[
+  {
+    "query": "python read in list from file",
+    "document": "def create_inputlist(arglist):\n    \"\"\"Read lines from a file and makes a list of file names.\n\n    Removes whitespace and lines that start with '#'\n    Recursively read all files with the extension '.lst'\n    \"\"\"\n    lines = []\n    if isinstance(arglist, list):\n        for arg in arglist:\n            if os.path.splitext(arg)[1] == '.lst':\n                lines += readlines(arg)\n            else:\n                lines.append(arg)\n    elif is_null(arglist):\n        pass\n    else:\n        if os.path.splitext(arglist)[1] == '.lst':\n            lines += readlines(arglist)\n        else:\n            lines.append(arglist)\n    return lines",
+    "label": 1
+  },
+  {
+    "query": "python read in list from file",
+    "z": "def read_file(cls, filepath):\n        \"\"\"Decodes bencoded data of a given file.\n\n        Returns decoded structure(s).\n\n        :param str filepath:\n        :rtype: list\n        \"\"\"\n        with open(filepath, mode='rb') as f:\n            contents = f.read()\n        return cls.decode(contents)",
+    "label": 0
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def parse_xml(xml_file):\n    xml = parse(xml_file)\n    root = xml.getroot()\n    return xml2list(root)",
+    "label": 0
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def file_input(self, file_object):\n        '''\n        Read and parse data from a *file object*, i.e. the type of object \n        returned by the builtin python function *open()*.\n        '''\n        return self.input(file_object.read(), name=file_object.name)",
+    "label": 0
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def _get_lines_in_file(self, filename):\n        \"\"\"\n        :rtype: list\n        \"\"\"\n        with codecs.open(filename, encoding='utf-8') as file:\n            return file.read().splitlines()",
+    "label": 1
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def read(self, f, dsetgrp, attributes, options):\n        # Use the grand-parent class version to read it and do most of\n        # the work.\n        data = hm.PythonListMarshaller.read(self, f, dsetgrp,\n                                            attributes, options)\n        return SubList(data)",
+    "label": 0
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def read_lines(in_file):\n    \"\"\"Returns a list of lines from a input markdown file.\"\"\"\n\n    with open(in_file, 'r') as inf:\n        in_contents = inf.read().split('\\n')\n    return in_contents",
+    "label": 1
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def _load(path):\r\n    with open(path, 'r') as f:\r\n        raw = f.read()\r\n    return raw.split('\\n')",
+    "label": 1
+  },
+  {
+    "query": "python read in list from file",
+    "document": "def read(self, size):\n        self.read = self.fileobj.read\n        return self.buf",
+    "label": 0
+  }
+]
