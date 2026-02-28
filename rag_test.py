@@ -1,27 +1,57 @@
 """
 RAG Retrieval Test — scores documents via cosine similarity.
 
-Usage: HF_TOKEN=your_token python rag_test.py --data data/rgb_nobel.json
+Supports both inline documents and file_path-based data.
+Usage: HF_TOKEN=your_token python rag_test.py --data data/openclaw_29106.json
 """
 
 import argparse
 import json
+import math
 import os
 
+import numpy as np
 from huggingface_hub import InferenceClient
+
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openclaw")
 
 
 def load_data(path):
-    """Load pairs from JSON. Handles both {document,label} and {code,ground_truth_label} keys."""
     with open(path) as f:
         raw = json.load(f)
     pairs = []
     for item in raw:
         query = item["query"]
-        doc = item.get("document") or item.get("code", "")
+        # Support both inline document and file_path
+        if "file_path" in item and "document" not in item:
+            fullpath = os.path.join(REPO, item["file_path"])
+            with open(fullpath, "r", errors="replace") as f:
+                doc = f.read()
+            name = item["file_path"]
+        else:
+            doc = item.get("document") or item.get("code", "")
+            name = doc[:80]
         label = item.get("label") if item.get("label") is not None else item.get("ground_truth_label", 0)
-        pairs.append((query, doc, int(label)))
+        pairs.append((query, doc, int(label), name))
     return pairs
+
+
+def cosine_similarity(a, b):
+    a, b = np.array(a), np.array(b)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10))
+
+
+def embed_batch(client, texts, model, batch_size=64):
+    """Get embeddings in batches."""
+    all_embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        result = client.feature_extraction(batch, model=model)
+        # result is list of embeddings (each is list of floats)
+        all_embeddings.extend(result)
+        if (i + batch_size) % 256 == 0 or i + batch_size >= len(texts):
+            print(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)}")
+    return all_embeddings
 
 
 def main():
@@ -30,44 +60,54 @@ def main():
     args = parser.parse_args()
 
     pairs = load_data(args.data)
-    queries = list(dict.fromkeys(p[0] for p in pairs))  # unique queries, preserve order
+    queries = list(dict.fromkeys(p[0] for p in pairs))
 
     client = InferenceClient(
         provider="hf-inference",
         api_key=os.environ["HF_TOKEN"],
     )
+    model = "sentence-transformers/all-mpnet-base-v2"
 
     for query in queries:
-        docs = [(doc, label) for q, doc, label in pairs if q == query]
-        all_docs = [d for d, _ in docs]
-        labels = ["POS" if l == 1 else "NEG" for _, l in docs]
+        docs = [(doc, label, name) for q, doc, label, name in pairs if q == query]
+        all_docs = [d for d, _, _ in docs]
+        labels = ["POS" if l == 1 else "NEG" for _, l, _ in docs]
+        names = [n for _, _, n in docs]
         n_pos = labels.count("POS")
         n_neg = labels.count("NEG")
 
-        scores = client.sentence_similarity(
-            query,
-            other_sentences=all_docs,
-            model="sentence-transformers/all-mpnet-base-v2",
-        )
-
-        ranked = sorted(zip(scores, labels, all_docs), key=lambda x: -x[0])
-
-        print(f"Query: {query}")
+        print(f"Query: {query[:120]}...")
         print(f"Total docs: {len(all_docs)} ({n_pos} positive, {n_neg} negative)")
-        print("=" * 90)
-        print(f"{'Rank':<5} {'Score':<8} {'Label':<6} {'Document (first 80 chars)'}")
-        print("-" * 90)
+        print("Embedding documents...")
 
-        for i, (score, label, doc) in enumerate(ranked, 1):
-            marker = "Y" if label == "POS" else "X"
-            print(f"{i:<5} {score:<8.4f} {label:<6} {marker} {doc[:80]}...")
+        # Embed query
+        q_emb = client.feature_extraction(query, model=model)
+
+        # Embed all documents in batches
+        doc_embs = embed_batch(client, all_docs, model)
+
+        # Compute cosine similarity
+        scores = [cosine_similarity(q_emb, d_emb) for d_emb in doc_embs]
+
+        ranked = sorted(zip(scores, labels, names), key=lambda x: -x[0])
+
+        print("=" * 100)
+        print(f"{'Rank':<5} {'Score':<8} {'Label':<6} {'File'}")
+        print("-" * 100)
+
+        for i, (score, label, name) in enumerate(ranked[:50], 1):
+            marker = "Y" if label == "POS" else " "
+            print(f"{i:<5} {score:<8.4f} {label:<6} {marker} {name}")
+
+        if len(ranked) > 50:
+            print(f"  ... ({len(ranked) - 50} more documents not shown)")
 
         # Metrics
-        print("\n" + "=" * 90)
+        print("\n" + "=" * 100)
         print("RETRIEVAL METRICS")
-        print("=" * 90)
+        print("=" * 100)
 
-        for k in [1, 3, 5]:
+        for k in [1, 3, 5, 10, 20]:
             top_k_labels = [label for _, label, _ in ranked[:k]]
             precision = top_k_labels.count("POS") / k
             recall = top_k_labels.count("POS") / n_pos if n_pos else 0
