@@ -2,16 +2,15 @@
 RAG Retrieval Test — scores documents via cosine similarity.
 
 Supports both inline documents and file_path-based data.
-Usage: HF_TOKEN=your_token python rag_test.py --data data/openclaw_29106.json
+Usage: python rag_test.py --data data/openclaw_29106.json
 """
 
 import argparse
 import json
-import math
 import os
 
 import numpy as np
-from huggingface_hub import InferenceClient
+from sentence_transformers import SentenceTransformer
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openclaw")
 
@@ -22,7 +21,6 @@ def load_data(path):
     pairs = []
     for item in raw:
         query = item["query"]
-        # Support both inline document and file_path
         if "file_path" in item and "document" not in item:
             fullpath = os.path.join(REPO, item["file_path"])
             with open(fullpath, "r", errors="replace") as f:
@@ -36,24 +34,6 @@ def load_data(path):
     return pairs
 
 
-def cosine_similarity(a, b):
-    a, b = np.array(a), np.array(b)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10))
-
-
-def embed_batch(client, texts, model, batch_size=64):
-    """Get embeddings in batches."""
-    all_embeddings = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        result = client.feature_extraction(batch, model=model)
-        # result is list of embeddings (each is list of floats)
-        all_embeddings.extend(result)
-        if (i + batch_size) % 256 == 0 or i + batch_size >= len(texts):
-            print(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)}")
-    return all_embeddings
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True, help="Path to JSON data file")
@@ -62,11 +42,8 @@ def main():
     pairs = load_data(args.data)
     queries = list(dict.fromkeys(p[0] for p in pairs))
 
-    client = InferenceClient(
-        provider="hf-inference",
-        api_key=os.environ["HF_TOKEN"],
-    )
-    model = "sentence-transformers/all-mpnet-base-v2"
+    print("Loading model...")
+    model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
 
     for query in queries:
         docs = [(doc, label, name) for q, doc, label, name in pairs if q == query]
@@ -80,14 +57,13 @@ def main():
         print(f"Total docs: {len(all_docs)} ({n_pos} positive, {n_neg} negative)")
         print("Embedding documents...")
 
-        # Embed query
-        q_emb = client.feature_extraction(query, model=model)
+        q_emb = model.encode([query], show_progress_bar=False)
+        doc_embs = model.encode(all_docs, show_progress_bar=True, batch_size=64)
 
-        # Embed all documents in batches
-        doc_embs = embed_batch(client, all_docs, model)
-
-        # Compute cosine similarity
-        scores = [cosine_similarity(q_emb, d_emb) for d_emb in doc_embs]
+        # Cosine similarity: dot product of normalized vectors
+        q_norm = q_emb / (np.linalg.norm(q_emb, axis=1, keepdims=True) + 1e-10)
+        d_norm = doc_embs / (np.linalg.norm(doc_embs, axis=1, keepdims=True) + 1e-10)
+        scores = (d_norm @ q_norm.T).flatten().tolist()
 
         ranked = sorted(zip(scores, labels, names), key=lambda x: -x[0])
 
@@ -118,6 +94,12 @@ def main():
             if label == "POS":
                 print(f"  MRR: {1/i:.4f} (first positive doc at rank {i})")
                 break
+
+        last_pos_rank = 0
+        for i, (_, label, _) in enumerate(ranked, 1):
+            if label == "POS":
+                last_pos_rank = i
+        print(f"  Last positive doc at rank {last_pos_rank} / {len(ranked)}")
 
         neg_above = 0
         for _, label, _ in ranked:
